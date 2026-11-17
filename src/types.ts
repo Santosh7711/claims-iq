@@ -93,3 +93,18 @@ export interface MonthCount {
   month: string;
   count: number;
 }
+
+export interface GlobalChatCitation {
+  claimId: string;
+  file: string;
+  page: number;
+}
+
+export interface GlobalChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  citations?: GlobalChatCitation[];
+  claimIds?: string[];
+  timestamp: string;
+}

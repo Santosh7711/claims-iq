@@ -1,6 +1,8 @@
 import {
   Claim,
   ChatMessage,
+  GlobalChatMessage,
+  GlobalChatCitation,
   Kpis,
   MonthCount,
   StageCount,
@@ -384,4 +386,114 @@ export async function sendChatMessage(
     timestamp: new Date().toISOString(),
   };
   return reply;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Global chat agent — can answer questions about any/all claims.     */
+/* ------------------------------------------------------------------ */
+
+const SUGGESTED_QUESTIONS = [
+  'How many claims are pending review?',
+  'What is the total approved amount?',
+  'Which claims are in the Paid stage?',
+  'Show me all Auto claims',
+  'What is the average claim amount?',
+  'Which adjuster has the most claims?',
+];
+
+export function getGlobalChatSuggestions(): string[] {
+  return SUGGESTED_QUESTIONS;
+}
+
+export async function sendGlobalChatMessage(text: string): Promise<GlobalChatMessage> {
+  await delay(800);
+  const q = text.toLowerCase();
+
+  const matched: Claim[] = CLAIMS.filter(
+    (c) =>
+      q.includes(c.id.toLowerCase()) ||
+      q.includes(c.claimant.toLowerCase()) ||
+      q.includes(c.type.toLowerCase()) ||
+      q.includes(c.adjuster.toLowerCase()) ||
+      q.includes(c.stage.toLowerCase()),
+  );
+
+  const buildCitations = (claims: Claim[]): GlobalChatCitation[] =>
+    claims.slice(0, 4).flatMap((c) =>
+      c.documents.slice(0, 2).map((d) => ({
+        claimId: c.id,
+        file: d.name,
+        page: 1,
+      })),
+    );
+
+  let replyText: string;
+  let citations: GlobalChatCitation[] = [];
+  let claimIds: string[] | undefined;
+
+  if (/pending|under review|approved\/rejected/.test(q)) {
+    const pending = CLAIMS.filter(
+      (c) => c.stage === 'Under Review' || c.stage === 'Approved/Rejected',
+    );
+    replyText = `There are ${pending.length} claims pending review:\n${pending
+      .map((c) => `• ${c.id} — ${c.claimant} (${c.stage}, ${c.amount.toLocaleString()})`)
+      .join('\n')}`;
+    citations = buildCitations(pending);
+    claimIds = pending.map((c) => c.id);
+  } else if (/paid|closed/.test(q)) {
+    const paid = CLAIMS.filter((c) => c.stage === 'Paid');
+    const total = paid.reduce((s, c) => s + c.amount, 0);
+    replyText = `${paid.length} claims have been paid, totaling ${total.toLocaleString()}:\n${paid
+      .map((c) => `• ${c.id} — ${c.claimant} (${c.amount.toLocaleString()}, closed ${c.closedDate})`)
+      .join('\n')}`;
+    citations = buildCitations(paid);
+    claimIds = paid.map((c) => c.id);
+  } else if (/auto|property|health|liability|travel|workers/.test(q)) {
+    const typeMatched =
+      matched.length > 0 ? matched : CLAIMS.filter((c) => q.includes(c.type.toLowerCase()));
+    replyText = `Found ${typeMatched.length} matching claims:\n${typeMatched
+      .map((c) => `• ${c.id} — ${c.claimant} (${c.type}, ${c.stage}, ${c.amount.toLocaleString()})`)
+      .join('\n')}`;
+    citations = buildCitations(typeMatched);
+    claimIds = typeMatched.map((c) => c.id);
+  } else if (/total.*amount|approved amount|sum|average|avg/.test(q)) {
+    const total = CLAIMS.reduce((s, c) => s + c.amount, 0);
+    const approved = CLAIMS.filter(
+      (c) => c.stage === 'Paid' || c.stage === 'Approved/Rejected',
+    ).reduce((s, c) => s + c.amount, 0);
+    const avg = Math.round(total / CLAIMS.length);
+    replyText = `Across all ${CLAIMS.length} claims:\n• Total claimed: ${total.toLocaleString()}\n• Approved/paid: ${approved.toLocaleString()}\n• Average per claim: ${avg.toLocaleString()}`;
+    citations = buildCitations(CLAIMS.slice(0, 3));
+  } else if (/adjuster|who.*has/.test(q)) {
+    const byAdjuster = new Map<string, number>();
+    CLAIMS.forEach((c) => byAdjuster.set(c.adjuster, (byAdjuster.get(c.adjuster) ?? 0) + 1));
+    const sorted = Array.from(byAdjuster.entries()).sort((a, b) => b[1] - a[1]);
+    replyText = `Claims by adjuster:\n${sorted
+      .map(([name, count]) => `• ${name}: ${count} claims`)
+      .join('\n')}`;
+    citations = [];
+  } else if (/how many|count|total claims/.test(q)) {
+    replyText = `There are ${CLAIMS.length} claims total. Breakdown by stage:\n${STAGES.map(
+      (s) => `• ${s}: ${CLAIMS.filter((c) => c.stage === s).length}`,
+    ).join('\n')}`;
+    citations = buildCitations(CLAIMS.slice(0, 3));
+  } else if (matched.length > 0) {
+    replyText = `I found ${matched.length} claim${matched.length === 1 ? '' : 's'} matching your query:\n${matched
+      .map((c) => `• ${c.id} — ${c.claimant} (${c.type}, ${c.stage}, ${c.amount.toLocaleString()})`)
+      .join('\n')}`;
+    citations = buildCitations(matched);
+    claimIds = matched.map((c) => c.id);
+  } else {
+    replyText = `I can help you with any claim question. Try asking about a specific claim (e.g. "CLM-2026-001"), a claimant name, a type (Auto, Property, Health), a stage, an adjuster, or aggregate stats like totals and averages. There are ${CLAIMS.length} claims in the system.`;
+    citations = [];
+  }
+
+  return {
+    id: `global-m-${Date.now()}`,
+    role: 'assistant',
+    text: replyText,
+    citations: citations.length > 0 ? citations : undefined,
+    claimIds,
+    timestamp: new Date().toISOString(),
+  };
 }

@@ -5,6 +5,7 @@ import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
 import ClaimsPage from '@/pages/ClaimsPage';
 import ClaimDetailPage from '@/pages/ClaimDetailPage';
+import GlobalChatAgent from '@/components/GlobalChatAgent';
 import { Role } from '@/types';
 
 type View =
@@ -113,6 +114,8 @@ export default function App() {
           </div>
         </main>
       </div>
+
+      <GlobalChatAgent onOpenClaim={openClaim} />
     </div>
   );
 }
